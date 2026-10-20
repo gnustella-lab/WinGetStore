@@ -1,0 +1,18 @@
+# Build and runtime outputs
+*.log
+*.tmp
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# IDE and Editor files
+.vs/
+.idea/
+.vscode/
+
+# Windows temp
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
