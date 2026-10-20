@@ -1,90 +1,90 @@
-# Architecture & Reverse-Engineering Technical Specification
+# Architecture and reverse engineering notes
 
-This document details the internal design, reverse-engineering methodology, and system mechanics behind **WinGetStore**.
+Technical notes on the reverse engineering work, UI reconstruction, and system integration behind WinGetStore.
 
 ---
 
-## 1. High-Level Architecture
+## 1. System design
 
-WinGetStore is structured into five decoupled layers:
+WinGetStore is divided into five parts:
 
 ```mermaid
 graph TD
-    UI[Fluent Window Shell - MainWindow.cs] --> Theme[Theme & Glyph System - StoreTheme.cs]
-    UI --> Catalog[Models & Package Catalog - Models.cs]
-    UI --> Icons[Multi-Tier Icon Resolver - IconResolver.cs]
-    UI --> Engine[WinGet Execution Engine - WinGetService.cs]
+    UI[Window Shell - MainWindow.cs] --> Theme[Theme & Font Glyphs - StoreTheme.cs]
+    UI --> Catalog[Models & State - Models.cs]
+    UI --> Icons[Icon Pipeline - IconResolver.cs]
+    UI --> Engine[WinGet Runner - WinGetService.cs]
     
-    Engine --> CLI[Windows Package Manager CLI - winget.exe]
-    Icons --> Cache[(Local Disk Cache Assets/AppIcons)]
+    Engine --> CLI[Local winget.exe process]
+    Icons --> Cache[(Disk Cache Assets/AppIcons)]
     Icons --> Reg[(Windows Uninstall Registry)]
     Icons --> Web[(Favicon / GitHub API)]
 ```
 
-### Component Summary
+### Components
 
-| Component | File | Responsibility |
+| Part | File | What it handles |
 |---|---|---|
-| **Shell & UI** | `MainWindow.cs` | Frameless custom chrome window, navigation rail, responsive cards, PDP views, Win32 hooks. |
-| **Theme Engine** | `StoreTheme.cs` | Light/Dark color palettes extracted from Store `.xbf` binaries, Private Use Area font glyph maps. |
-| **Icon Pipeline** | `IconResolver.cs` | 4-tier icon resolution: memory cache, disk cache, registry inspection, background web fetch. |
-| **Service Layer** | `WinGetService.cs` | Async process runner, fixed column-boundary parser, locale normalization, live stream parsing. |
-| **Data Models** | `Models.cs` | `PackageItem`, `InstallTaskItem`, `CuratedCatalog` with INotifyPropertyChanged bindings. |
-| **Entry Point** | `Program.cs` | DPI awareness bootstrapping, `--self-test` parser tests, `--ui-smoke-test` layout validation. |
+| **Shell & UI** | `MainWindow.cs` | Borderless window, custom title bar, sidebar navigation, product cards, details page, Win32 window hooks. |
+| **Theme & Glyphs** | `StoreTheme.cs` | Light and dark palettes extracted from Store `.xbf` files, Private Use Area glyph mappings for Store fonts. |
+| **Icon Pipeline** | `IconResolver.cs` | Four-tier icon lookup: in-memory cache, local disk files, registry scan, background web fetch. |
+| **WinGet Service** | `WinGetService.cs` | Async execution of `winget.exe`, column-aligned table output parser, locale normalization, streaming terminal lines. |
+| **Models** | `Models.cs` | `PackageItem`, `InstallTaskItem`, and default catalog entries with `INotifyPropertyChanged` bindings. |
+| **Entry Point** | `Program.cs` | High-DPI declaration, `--self-test` parser check, `--ui-smoke-test` layout validation. |
 
 ---
 
-## 2. Reverse Engineering the Official Microsoft Store
+## 2. Reverse engineering the Microsoft Store
 
-The application was reconstructed by reverse-engineering the official Microsoft Store UWP package on Windows 10:
+The application was built by analyzing the installed Microsoft Store package on Windows 10:
 `C:\Program Files\WindowsApps\Microsoft.WindowsStore_22608.1401.7.0_x64__8wekyb3d8bbwe`
 
-### 2.1 Binary & Assembly Inspection (REA)
-Using **REA** (Reverse Engineer Anything), we inspected:
-1. `WinStore.App.dll`: Identified core navigation controllers, view model contracts, and view mappings.
-2. `Microsoft.Management.Deployment.winmd`: Analyzed official WinGet COM interfaces and verified compatibility with `winget.exe` CLI outputs.
-3. `WinStore.Tasks.winmd`: Examined background task queuing and notification mechanisms.
+### 2.1 Binary and assembly analysis
+Using REA, we inspected three core assemblies:
+1. `WinStore.App.dll`: Located view models, page contracts, and navigation controllers.
+2. `Microsoft.Management.Deployment.winmd`: Examined the Store's internal WinGet COM interface bindings to ensure parity with the CLI.
+3. `WinStore.Tasks.winmd`: Reviewed background update and task worker patterns.
 
-### 2.2 XBF Binary Resource Decompilation
-We extracted string tables and visual token hierarchies from compiled XBF assets in `WinStore.Resources.pri` and `Themes/`:
-- **Color Palettes**: Extracted from `Themes\Dark.xbf` and `Themes\Light.xbf`.
+### 2.2 XBF resource inspection
+We dumped string tables and visual property structures from compiled XBF files in the Store package:
+- **Color tokens**: Extracted from `Themes\Dark.xbf` and `Themes\Light.xbf`.
   - Window background: `#1A1A1A` (Dark), `#F0F2F5` (Light)
   - Content surface: `#212121` (Dark), `#F9F9FB` (Light)
   - Card background: `#2B2B2B` (Dark), `#FFFFFF` (Light)
   - Card hover: `#333333` (Dark), `#F3F4F6` (Light)
-  - Accent brush: `#0078D4` (Dark), `#0067C0` (Light)
-- **Component Layouts**:
-  - `CompactProductCard.xbf`: Card dimensions (345x148), rounded corners (8px), padding (16,14).
-  - `ImmersiveProductIdentity.xbf`: Hero banner layout, 84px icon tile, two-column responsive split.
-  - `SearchPageV2Layout.xbf`: Header search bar with integrated clear and submit glyph actions.
-- **Icon Glyphs**:
-  Extracted glyph mappings from `Themes\Icons.xbf` mapped to `StoreIcons.ttf` (`Store Fluent Icons`) and `StorMDL2.ttf`:
+  - Accent color: `#0078D4` (Dark), `#0067C0` (Light)
+- **Card and page layouts**:
+  - `CompactProductCard.xbf`: Card dimensions (345x148), 8px corner radius, internal padding.
+  - `ImmersiveProductIdentity.xbf`: Hero banner layout, 84px icon tile, two-column split for description and metadata.
+  - `SearchPageV2Layout.xbf`: Header search bar with clear button and enter key triggers.
+- **Icon glyphs**:
+  Extracted glyph mappings from `Themes\Icons.xbf` corresponding to `StoreIcons.ttf` (`Store Fluent Icons`) and `StorMDL2.ttf`:
   - `\uE72B`: Back navigation arrow
-  - `\uE721`: Search lens
-  - `\uE72C`: Refresh / sync
-  - `\uE896`: Download / Install
-  - `\uE8F1`: Library
-  - `\uE80F`: Home
-  - `\uE895`: Updates
-  - `\uE713`: Settings
+  - `\uE721`: Search magnifying glass
+  - `\uE72C`: Refresh / sync arrow
+  - `\uE896`: Download / install tray
+  - `\uE8F1`: Library icon
+  - `\uE80F`: Home icon
+  - `\uE895`: Updates download icon
+  - `\uE713`: Settings gear
 
-### 2.3 Elimination of Bloat & Tracking
-By controlling the complete reconstruction, the following components present in the official store were deliberately omitted:
-- `TileAdsBadge.xbf` (Promoted advertising badges)
-- `PromotionalBar.xbf` (Sponsor banners)
-- `UpsellModule.xbf` (Product upselling prompts)
-- `GamePassHeroUnitModule.xbf` & `Microsoft365HeroUnitModule.xbf` (Subscription advertisements)
-- `AIHub` (Copilot / AI upsell sections)
-- `MeControl` / `PersonPicture` / `XboxAuthManager` (Forced Microsoft Account authentication)
+### 2.3 Dropping bloat and tracking modules
+Because the UI was reconstructed from source rather than hooked into runtime assemblies, we deliberately discarded all advertising and tracking components:
+- `TileAdsBadge.xbf` (ad badges on tiles)
+- `PromotionalBar.xbf` (sponsored banners)
+- `UpsellModule.xbf` (upselling popups)
+- `GamePassHeroUnitModule.xbf` and `Microsoft365HeroUnitModule.xbf` (subscription ads)
+- `AIHub` (Copilot / AI promotional sections)
+- `MeControl`, `PersonPicture`, and `XboxAuthManager` (forced Microsoft account login)
 
 ---
 
-## 3. Win32 Window Management & DPI Mechanics
+## 3. Window management and DPI fixes
 
-Modern WPF applications with borderless custom window chrome (`WindowStyle.None` and `WindowChrome`) suffer from a notorious Windows 10 bug when maximized: the window frame expands by 8 pixels in all directions (`-8, -8`) into adjacent screens or under the taskbar.
+Custom borderless windows in WPF (`WindowStyle.None` paired with `WindowChrome`) have a long-standing issue in Windows 10: when maximized, Windows expands the window by 8 pixels in every direction (`-8, -8`) to hide the standard window borders. For custom chrome apps, this pushes title bars, search inputs, and navigation buttons off-screen or underneath the taskbar.
 
-### 3.1 WM_GETMINMAXINFO Handling
-WinGetStore intercepts `WM_GETMINMAXINFO` (`0x0024`) through a native Win32 message hook installed in `OnWindowSourceInitialized`:
+### 3.1 WM_GETMINMAXINFO hook
+To fix this, WinGetStore intercepts the native `WM_GETMINMAXINFO` (`0x0024`) message through an `HwndSource` hook initialized during `SourceInitialized`:
 
 ```csharp
 private static void WmGetMinMaxInfo(IntPtr hwnd, IntPtr lParam)
@@ -109,18 +109,18 @@ private static void WmGetMinMaxInfo(IntPtr hwnd, IntPtr lParam)
 }
 ```
 
-### 3.2 Dynamic Visual Adjustments
-When the window transitions between `Normal` and `Maximized`:
-- Corner radius is toggled between `8px` (floating) and `0px` (docked).
-- Resize border thickness drops to `0px` when maximized to prevent invisible hit-test padding.
-- The titlebar caption button dynamically swaps glyphs (`\uE922` Maximize vs `\uE923` Restore).
-- Window drag handling allows seamless drag-to-restore when dragging down from the maximized title bar.
+### 3.2 Visual state updates
+When switching between normal and maximized states:
+- Corner radius changes between `8px` (floating) and `0px` (docked).
+- Border resize thickness is set to `0px` when maximized to prevent unwanted hit-testing margins.
+- Title bar caption buttons swap between `\uE922` (Maximize) and `\uE923` (Restore).
+- The mouse drag handler detects when a user pulls down on a maximized title bar, restoring the window and repositioning it under the cursor smoothly.
 
 ---
 
-## 4. Multi-Tier Icon Resolution Strategy
+## 4. Icon resolution pipeline
 
-To provide rich visual fidelity without depending on proprietary Microsoft CDN store tokens, `IconResolver.cs` implements an asynchronous four-tier pipeline:
+Without depending on Microsoft Store CDN access tokens, `IconResolver.cs` uses a four-step pipeline to find icons:
 
 ```mermaid
 sequenceDiagram
@@ -133,37 +133,38 @@ sequenceDiagram
 
     UI->>Res: ResolveIconForPackage(pkg)
     Res->>Mem: Check in-memory ImageSource
-    alt Hit
+    alt Found in memory
         Mem-->>UI: Return cached image
-    else Miss
+    else Cache miss
         Res->>Disk: Check Assets/AppIcons/<id>.png
-        alt Hit
+        alt Found on disk
             Disk-->>UI: Return loaded bitmap
-        else Miss
+        else Disk miss
             Res->>Reg: Search DisplayIcon in Registry
-            alt Hit (.exe/.ico)
-                Reg-->>UI: Extract via Shell Icon.ExtractAssociatedIcon
-            else Miss
+            alt Found installed executable
+                Reg-->>UI: Extract via Icon.ExtractAssociatedIcon
+            else Not installed
                 Res->>Net: Queue background download
-                Net->>Disk: Save downloaded PNG
+                Net->>Disk: Save PNG file
                 Net-->>UI: Update pkg.IconSource via PropertyChanged
             end
         end
     end
 ```
 
-1. **Tier 1 (Memory)**: Fast `ConcurrentDictionary<string, ImageSource>` lookup.
-2. **Tier 2 (Disk Cache)**: Local file existence check in `Assets\AppIcons\<PackageId>.png`.
-3. **Tier 3 (Local Registry Extraction)**: Scans Windows Uninstall registry keys (`HKLM` and `HKCU` `Software\Microsoft\Windows\CurrentVersion\Uninstall`). Extracts native 32-bit high-resolution icons directly from the application's executable via `System.Drawing.Icon.ExtractAssociatedIcon` and converts it to a WPF `BitmapSource`.
-4. **Tier 4 (Async Web Fetch)**: Resolves official high-resolution publisher icons using Google Favicon V2 and GitHub organization avatars, saving directly to disk cache.
+1. **Memory cache**: Fast check against `ConcurrentDictionary<string, ImageSource>`.
+2. **Local disk**: Looks for pre-packaged or previously cached PNGs in `Assets\AppIcons\<PackageId>.png`.
+3. **Windows Registry**: Scans `HKLM` and `HKCU` uninstall keys for installed software. If a valid executable path is found in `DisplayIcon`, extracts the high-resolution application icon via `System.Drawing.Icon.ExtractAssociatedIcon` and converts it into a WPF `BitmapSource`.
+4. **Background web download**: If an app is neither cached nor installed locally, queues a background request to fetch publisher icons using Google's Favicon V2 service and GitHub organization avatars, caching the file to disk.
 
 ---
 
-## 5. WinGet CLI Orchestration & Locale Normalization
+## 5. WinGet CLI parsing
 
-WinGet CLI outputs tables with fixed column alignment. Because user systems can have different display languages (e.g., English, Portuguese, Spanish, German), `WinGetService.ParseTableOutput` detects column boundaries dynamically rather than relying on hardcoded English column headers:
+WinGet outputs tabular data where column positions shift depending on installed versions and package IDs. Additionally, system languages alter column headers (e.g., `Name` vs `Nome`, `Version` vs `Versão`, `Available` vs `Disponível`).
 
-- Identifies separator line (`--------`) to map exact string indices.
-- Inspects header tokens with regular expressions to map `Name`, `ID`, `Version`, `Available`, and `Source` across language variations (`ID` / `Id`, `Version` / `Versão`, `Available` / `Disponível`, `Source` / `Origem`).
-- Strips non-breaking spaces (`\u00A0`) common in localized Windows terminal output.
-- Captures live stdout/stderr streams to provide real-time installation logs directly in the UI.
+`WinGetService.ParseTableOutput` addresses this by:
+- Locating the hyphen divider line (`---------`) to measure exact character boundaries for columns.
+- Scanning header words with regular expressions to map field indices regardless of whether headers are English, Portuguese, or Spanish.
+- Stripping non-breaking spaces (`\u00A0`) produced by some localized Windows command prompts.
+- Piping process stdout/stderr directly to an event handler so the UI can show live progress without hanging.
